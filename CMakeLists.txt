@@ -15,23 +15,17 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
-execute_process(
-    COMMAND ${Python3_EXECUTABLE} -c "import tensorflow as tf; print(tf.sysconfig.get_lib())"
-    OUTPUT_VARIABLE TF_LIB
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
-# Ejecutar un script para obtener el flag ABI correcto que utiliza la instalación de TF actual
+# Ejecutar script para obtener el flag de compilacion natural y exacto del sistema (ej: el ABI que usa Colab)
 execute_process(
     COMMAND ${Python3_EXECUTABLE} -c "import tensorflow as tf; print(' '.join(tf.sysconfig.get_compile_flags()))"
-    OUTPUT_VARIABLE TF_COMPILE_FLAGS
+    OUTPUT_VARIABLE TF_COMPILE_FLAGS_STR
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
 # Ejecutar un script para obtener los flags exactos de linkado
 execute_process(
     COMMAND ${Python3_EXECUTABLE} -c "import tensorflow as tf; print(' '.join(tf.sysconfig.get_link_flags()))"
-    OUTPUT_VARIABLE TF_LINK_FLAGS
+    OUTPUT_VARIABLE TF_LINK_FLAGS_STR
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
@@ -41,14 +35,13 @@ include_directories(${TF_INC})
 # Crear la biblioteca compartida .so a partir del código C++
 add_library(zero_out SHARED zero_out.cc)
 
-# Evitar el prefijo "lib" convencional en Linux
-set_target_properties(zero_out PROPERTIES PREFIX "")
-# Especificar que el SO será un módulo cargable dinámicamente (.so)
-set_target_properties(zero_out PROPERTIES SUFFIX ".so")
+# Evitar el prefijo "lib" convencional en Linux y el .so
+set_target_properties(zero_out PROPERTIES PREFIX "" SUFFIX ".so")
 
-# Configurar flags de compilación. En lugar de forzar ABI=1, usamos los flags exactos provistos por tf.sysconfig
-target_compile_options(zero_out PRIVATE -fPIC -O2 -D_GLIBCXX_USE_CXX11_ABI=0)
-set_target_properties(zero_out PROPERTIES COMPILE_FLAGS ${TF_COMPILE_FLAGS})
+# === FIX DEFINITIVO ===
+# Desactivamos el "RTTI" (-fno-rtti) del compilador de Colab, porque los paquetes de TensorFlow alojados en la nube están compilados ciegos y ocultan la TypeInformation virtual (el _ZTIN10tensorflow8OpKernelE que reventaba la carga de memoria si no se oculta del otro lado también).
+target_compile_options(zero_out PRIVATE -fno-rtti -fno-exceptions -fPIC -O2)
 
-# Configurar los flags de enlazado provistos por tf.sysconfig para agarrar libtensorflow_framework.so.2 correcto
-set_target_properties(zero_out PROPERTIES LINK_FLAGS ${TF_LINK_FLAGS})
+# Añadimos limpiamente todos los flags nativos detectados por el sistema de arriba.
+set_target_properties(zero_out PROPERTIES COMPILE_FLAGS "${TF_COMPILE_FLAGS_STR}")
+set_target_properties(zero_out PROPERTIES LINK_FLAGS "${TF_LINK_FLAGS_STR}")
