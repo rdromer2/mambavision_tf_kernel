@@ -1,0 +1,10 @@
+# CMake y binarios
+build/
+CMakeCache.txt
+CMakeFiles/
+*.so
+*.o
+
+# Entornos y Notebooks (opcional, excluye caché de python)
+__pycache__/
+.ipynb_checkpoints/
