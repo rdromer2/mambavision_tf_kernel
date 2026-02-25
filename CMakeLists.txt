@@ -47,7 +47,7 @@ set_target_properties(zero_out PROPERTIES PREFIX "")
 set_target_properties(zero_out PROPERTIES SUFFIX ".so")
 
 # Configurar flags de compilación. En lugar de forzar ABI=1, usamos los flags exactos provistos por tf.sysconfig
-target_compile_options(zero_out PRIVATE -fPIC -O2)
+target_compile_options(zero_out PRIVATE -fPIC -O2 -D_GLIBCXX_USE_CXX11_ABI=0)
 set_target_properties(zero_out PROPERTIES COMPILE_FLAGS ${TF_COMPILE_FLAGS})
 
 # Configurar los flags de enlazado provistos por tf.sysconfig para agarrar libtensorflow_framework.so.2 correcto
