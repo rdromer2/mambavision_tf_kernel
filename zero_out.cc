@@ -13,10 +13,18 @@ REGISTER_OP("ZeroOut")
       return absl::OkStatus();
     });
 
+#include <string>
+
 // Implementación del Kernel
 class ZeroOutOp : public OpKernel {
  public:
   explicit ZeroOutOp(OpKernelConstruction* context) : OpKernel(context) {}
+
+  // Workaround para el bug de TensorFlow 2.16+ donde libtensorflow_framework.so 
+  // no exporta el símbolo de virtual TraceString pre-compilado en el pip package de Ubuntu.
+  std::string TraceString(const OpKernelContext& ctx, bool verbose) const override {
+    return "ZeroOut";
+  }
 
   void Compute(OpKernelContext* context) override {
     // Tomar el tensor de entrada
