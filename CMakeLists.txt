@@ -38,10 +38,18 @@ add_library(zero_out SHARED zero_out.cc)
 # Evitar el prefijo "lib" convencional en Linux y el .so
 set_target_properties(zero_out PROPERTIES PREFIX "" SUFFIX ".so")
 
-# === FIX DEFINITIVO ===
-# Desactivamos el "RTTI" (-fno-rtti) del compilador de Colab, porque los paquetes de TensorFlow alojados en la nube están compilados ciegos y ocultan la TypeInformation virtual (el _ZTIN10tensorflow8OpKernelE que reventaba la carga de memoria si no se oculta del otro lado también).
+# === FIX DEFINITIVO DE ABI + RTTI ===
+# Desactivamos el "RTTI" (-fno-rtti) del compilador de Colab, porque los paquetes de TensorFlow alojados en la nube están compilados ciegos y ocultan la TypeInformation virtual.
 target_compile_options(zero_out PRIVATE -fno-rtti -fno-exceptions -fPIC -O2)
 
-# Añadimos limpiamente todos los flags nativos detectados por el sistema de arriba.
-set_target_properties(zero_out PROPERTIES COMPILE_FLAGS "${TF_COMPILE_FLAGS_STR}")
+# Colab's tf.sysconfig devuelve por defecto -D_GLIBCXX_USE_CXX11_ABI=1, lo cual es incompatible
+# con el binario pre-compilado de pip que requiere 0. 
+# Lo limpiamos usando regex en CMake para evitar advertencias de "redefined":
+string(REGEX REPLACE "-D_GLIBCXX_USE_CXX11_ABI=[0-9]" "" TF_COMPILE_FLAGS_STR_CLEAN "${TF_COMPILE_FLAGS_STR}")
+
+# Finalmente lo re-inyectamos como 0 explícitamente:
+set(TF_COMPILE_FLAGS_FINAL "${TF_COMPILE_FLAGS_STR_CLEAN} -D_GLIBCXX_USE_CXX11_ABI=0")
+
+# Añadimos limpiamente todos los flags al target
+set_target_properties(zero_out PROPERTIES COMPILE_FLAGS "${TF_COMPILE_FLAGS_FINAL}")
 set_target_properties(zero_out PROPERTIES LINK_FLAGS "${TF_LINK_FLAGS_STR}")
