@@ -37,7 +37,11 @@ __device__ inline float compute_scan_step(const float A_bar, const float h_prev,
 // Cada hilo se asigna a un canal (d_model) de un elemento del batch.
 // Dentro del kernel, el hilo ejecuta un bucle secuencial sobre seq_len,
 // propagando el estado oculto h_prev en su registro ultrarrápido privado.
-__global__ void MambaSelectiveScanKernel(const float* u_in, float* out, int batch_size, int seq_len, int d_model) {
+__global__ void MambaSelectiveScanKernel(
+    const float* u_in, float* out,
+    const float* delta, const float* A, const float* B, const float* C,
+    int batch_size, int seq_len, int d_model) {
+
     int global_idx = blockIdx.x * blockDim.x + threadIdx.x;
     int num_channels_total = batch_size * d_model;
 
@@ -47,14 +51,10 @@ __global__ void MambaSelectiveScanKernel(const float* u_in, float* out, int batc
     int b = global_idx / d_model;
     int d = global_idx % d_model;
 
-    // Marcadores paramétricos estáticos de validación (serán reemplazados por tensores
-    // dinámicos proyectados desde Python en fases posteriores de integración)
-    const float local_delta = 0.1f;
-    const float local_A = -1.0f;
-    const float local_B = 1.0f;
-
-    // Pre-cálculo de discretización cautivo en registro del Thread
-    float A_bar = discretize_A(local_A, local_delta);
+    // A es [d_model]: estático por canal, independiente del tiempo y batch.
+    // Se lee UNA sola vez fuera del bucle y se retiene en registro privado.
+    // Stride unitario: hilos vecinos (d, d+1...) leen A[d], A[d+1] → coalescente.
+    const float local_A = A[d];
 
     // Estado oculto causal en registro ultrarrápido (resuelve dependencia h_{t-1})
     float h_prev = 0.0f;
@@ -62,28 +62,43 @@ __global__ void MambaSelectiveScanKernel(const float* u_in, float* out, int batc
     // Propagación causal secuencial a lo largo del eje temporal
     for (int t = 0; t < seq_len; ++t) {
         // Stride coalescente: hilos vecinos (d, d+1...) leen posiciones contiguas
+        // Reutilizado para u, delta, B y C (todos son [batch, seq_len, d_model])
         int tensor_idx = (b * seq_len * d_model) + (t * d_model) + d;
 
-        // VRAM -> Registro
-        float x_t = u_in[tensor_idx];
+        // VRAM -> Registro: lectura de la entrada y parámetros dinámicos
+        float x_t       = u_in[tensor_idx];
+        float local_delta = delta[tensor_idx];  // Δ varía por [batch, t, d]
+        float local_B     = B[tensor_idx];       // B varía por [batch, t, d]
+
+        // Discretización dinámica por timestep: A_bar = exp(A * delta_t)
+        // Se recalcula en cada iteración porque delta es dependiente del tiempo.
+        float A_bar = discretize_A(local_A, local_delta);
 
         // Computación atómica FMA sobre registro privado
         h_prev = compute_scan_step(A_bar, h_prev, local_B, x_t, local_delta);
 
-        // Registro -> VRAM
-        out[tensor_idx] = h_prev;
+        // C modula el estado oculto antes de escribir a VRAM:
+        // y_t = C_t * h_t (proyección del estado oculto al espacio de salida)
+        float local_C = C[tensor_idx];
+        out[tensor_idx] = local_C * h_prev;
     }
 }
 
 // Función Launcher en C++ estándar exportable al wrapper TensorFlow
 // extern "C" evita el C++ Name Mangling, garantizando que el enlazador g++
 // de TensorFlow encuentre el nombre exacto de la función exportada desde nvcc.
-extern "C" cudaError_t LaunchMambaSelectiveScan(const float* d_in, float* d_out, int batch_size, int seq_len, int d_model) {
+extern "C" cudaError_t LaunchMambaSelectiveScan(
+    const float* d_in, float* d_out,
+    const float* d_delta, const float* d_A, const float* d_B, const float* d_C,
+    int batch_size, int seq_len, int d_model) {
+
     int num_channels_total = batch_size * d_model;
     int threads_per_block = 256;
     int blocks_per_grid = (num_channels_total + threads_per_block - 1) / threads_per_block;
 
-    MambaSelectiveScanKernel<<<blocks_per_grid, threads_per_block>>>(d_in, d_out, batch_size, seq_len, d_model);
+    MambaSelectiveScanKernel<<<blocks_per_grid, threads_per_block>>>(
+        d_in, d_out, d_delta, d_A, d_B, d_C,
+        batch_size, seq_len, d_model);
 
     // Contención estricta diagnóstica
     CUDA_CHECK(cudaGetLastError());
