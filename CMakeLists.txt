@@ -56,6 +56,14 @@ target_compile_options(mamba_kernel PRIVATE
 # en tiempo de ejecución para cada inferencia primeriza (TensorFlow Warmup Stalls).
 set_target_properties(mamba_kernel PROPERTIES CUDA_ARCHITECTURES "75;80")
 
-# Añadimos limpiamente todos los flags nativos de TF al target
-set_target_properties(mamba_kernel PROPERTIES COMPILE_FLAGS "${TF_COMPILE_FLAGS_STR}")
-set_target_properties(mamba_kernel PROPERTIES LINK_FLAGS "${TF_LINK_FLAGS_STR}")
+# Inyectamos los flags nativos de TF usando la API moderna de CMake.
+# separate_arguments() convierte el string a lista CMake; COMPILE_LANGUAGE:CXX
+# asegura que los flags de ABI de TF (-D_GLIBCXX_USE_CXX11_ABI=0) se apliquen
+# exclusivamente al compilador C++ Host (g++) y no contaminen nvcc.
+separate_arguments(TF_COMPILE_FLAGS_LIST NATIVE_COMMAND "${TF_COMPILE_FLAGS_STR}")
+separate_arguments(TF_LINK_FLAGS_LIST NATIVE_COMMAND "${TF_LINK_FLAGS_STR}")
+
+target_compile_options(mamba_kernel PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:${TF_COMPILE_FLAGS_LIST}>
+)
+target_link_options(mamba_kernel PRIVATE ${TF_LINK_FLAGS_LIST})
