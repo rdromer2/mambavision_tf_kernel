@@ -13,12 +13,14 @@ extern "C" int LaunchMambaSelectiveScan(
     int batch_size, int seq_len, int d_model);
 
 // 1. Registro de la interfaz hacia Python
+// NOTA: TF reserva letras mayúsculas individuales (A, B, C, T) como variables de tipo
+// en su parser de REGISTER_OP. Usar nombres descriptivos en minúsculas para evitar el conflicto.
 REGISTER_OP("MambaSelectiveScan")
     .Input("u: float")       // [batch, seq_len, d_model] - Entrada secuencial
     .Input("delta: float")   // [batch, seq_len, d_model] - Step size de discretización
-    .Input("A: float")       // [d_model]                 - Matriz de estado (estática por canal)
-    .Input("B: float")       // [batch, seq_len, d_model] - Matriz de entrada (input-dependent)
-    .Input("C: float")       // [batch, seq_len, d_model] - Matriz de salida (input-dependent)
+    .Input("a_param: float") // [d_model]                 - Matriz de estado (estática por canal)
+    .Input("b_param: float") // [batch, seq_len, d_model] - Matriz de entrada (input-dependent)
+    .Input("c_param: float") // [batch, seq_len, d_model] - Matriz de salida (input-dependent)
     .Output("out: float")
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
         c->set_output(0, c->input(0));
