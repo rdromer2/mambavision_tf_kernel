@@ -1,10 +1,8 @@
 #include <cuda_runtime.h>
 #include <stdio.h>
+#include <math.h>
 
 // Macro robusta para capturar errores de CUDA (síncronos y asíncronos)
-// ¿Por qué? Las llamadas de CUDA son asíncronas respecto a la CPU.
-// Si lanzamos un kernel que genera un "segmentation fault" (acceso ilegal de memoria en VRAM),
-// la falla no explota en la línea del kernel en el host, sino más adelante o al leer resultados.
 #define CUDA_CHECK(call) \
     do { \
         cudaError_t err = call; \
@@ -14,70 +12,81 @@
         } \
     } while (0)
 
-// 1. El Kernel de CUDA (Se ejecuta en la VRAM de la gráfica)
-// El cualificador __global__ indica que la función corre en GPU y es invocable desde CPU.
-__global__ void MambaSelectiveScanKernel(const float* u_in, float* out, int total_elements) {
-    // Calculamos el índice global lineal (astronómico) y el índice local del hilo dentro del bloque
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int tid = threadIdx.x; // Índice de 0 a 255
-    
-    // --- FASE 3.5: RESERVA ESTÁTICA EN MEMORIA COMPARTIDA (SRAM L1) ---
-    // ¿Por qué tamaño fijo 256? Al lanzarlo desde C++ fijamos `threads_per_block = 256`.
-    // La memoria __shared__ la ven en comunión exclusivamente los 256 hilos de este bloque físico.
-    __shared__ float s_u[256];
-    __shared__ float s_h[256];
+// --- MÓDULO MATEMÁTICO AISLADO (__device__) ---
+// Separación logística-matemática estricta. Obliga a que tanto el Forward Pass
+// como el futuro Backward Pass (Fase 4) invoquen exactamente los mismos binarios,
+// eliminando cualquier discrepancia de precisión en punto flotante.
 
-    // --- CARGA COOPERATIVA DE VRAM A SRAM ---
-    // Si el hilo global está dentro de un dato válido, carga el dato físico de VRAM
-    if (idx < total_elements) {
-        s_u[tid] = u_in[idx];
-        s_h[tid] = 0.0f; // Inicialización temporal del Hidden State de Mamba
-    } else {
-        // Purgado de las posiciones de caché muertas en los bordes para el bloque final (Padding)
-        s_u[tid] = 0.0f;
-        s_h[tid] = 0.0f;
-    }
+// Discretización paramétrica con Zero-Order Hold (ZOH)
+// A_bar = exp(A * delta)
+__device__ inline float discretize_A(const float A, const float delta) {
+    return expf(A * delta);
+}
 
-    // --- BARRERA FÍSICA INQUEBRANTABLE ---
-    // ¿Por qué está aquí suelto y fuera del IF? 
-    // Un __syncthreads() "if statement" divergente provoca un DEADLOCK, porque los hilos
-    // que entran al if esperan infinitamente a los que se fueron por el else.
-    // Aquí bloqueamos el reloj del SM hasta certificar que s_u[] de [0 a 255] se ha rellenado al completo.
-    __syncthreads();
+// Computación iterativa del estado oculto recurrente
+// h_t = A_bar * h_{t-1} + B_bar * x_t
+// Utiliza fmaf() (Fused Multiply-Add) para ejecutar la acumulación en una sola
+// instrucción atómica de hardware, limitando la cascada de redondeo IEEE 754.
+__device__ inline float compute_scan_step(const float A_bar, const float h_prev, const float B, const float x, const float delta) {
+    float B_bar = B * delta;
+    return fmaf(A_bar, h_prev, B_bar * x);
+}
 
-    // <--- MARCADOR FUTURO: MATEMÁTICAS SELECTIVE SCAN RECURRENTES AQUÍ --->
-    
-    // --- ESCRITURA VRAM DESCENDENTE TEMPORAL ---
-    // Ya seguros de que SRAM está nutrida y sincronizada matemáticamente, 
-    // volcamos los resultados estancados de nuevo a la memoria visible por el sistema host
-    if (idx < total_elements) {
-        // En Fase 3 lo leíamos de `u_in`. Ahora es `s_u` (que multiplicaremos de paso para test visual)
-        out[idx] = s_u[tid] * 2.0f;
+// --- MÓDULO PRINCIPAL DE FLUJO GPU (FORWARD PASS) ---
+// Mapeo Hilo-por-Canal. Flujo directo VRAM -> Registro -> VRAM.
+// Cada hilo se asigna a un canal (d_model) de un elemento del batch.
+// Dentro del kernel, el hilo ejecuta un bucle secuencial sobre seq_len,
+// propagando el estado oculto h_prev en su registro ultrarrápido privado.
+__global__ void MambaSelectiveScanKernel(const float* u_in, float* out, int batch_size, int seq_len, int d_model) {
+    int global_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int num_channels_total = batch_size * d_model;
+
+    if (global_idx >= num_channels_total) return;
+
+    // Desanidar tensor: mapeo lógico [batch, d_model]
+    int b = global_idx / d_model;
+    int d = global_idx % d_model;
+
+    // Marcadores paramétricos estáticos de validación (serán reemplazados por tensores
+    // dinámicos proyectados desde Python en fases posteriores de integración)
+    const float local_delta = 0.1f;
+    const float local_A = -1.0f;
+    const float local_B = 1.0f;
+
+    // Pre-cálculo de discretización cautivo en registro del Thread
+    float A_bar = discretize_A(local_A, local_delta);
+
+    // Estado oculto causal en registro ultrarrápido (resuelve dependencia h_{t-1})
+    float h_prev = 0.0f;
+
+    // Propagación causal secuencial a lo largo del eje temporal
+    for (int t = 0; t < seq_len; ++t) {
+        // Stride coalescente: hilos vecinos (d, d+1...) leen posiciones contiguas
+        int tensor_idx = (b * seq_len * d_model) + (t * d_model) + d;
+
+        // VRAM -> Registro
+        float x_t = u_in[tensor_idx];
+
+        // Computación atómica FMA sobre registro privado
+        h_prev = compute_scan_step(A_bar, h_prev, local_B, x_t, local_delta);
+
+        // Registro -> VRAM
+        out[tensor_idx] = h_prev;
     }
 }
 
-// 2. La función *Launcher* en C++ estándar
-// ¿Por qué extern "C"? Evitamos el C++ "Name Mangling". Esto garantiza que el enlazador g++
-// de TensorFlow encuentre el nombre exacto de la función exportada desde nvcc sin sufijos raros.
+// Función Launcher en C++ estándar exportable al wrapper TensorFlow
+// extern "C" evita el C++ Name Mangling, garantizando que el enlazador g++
+// de TensorFlow encuentre el nombre exacto de la función exportada desde nvcc.
 extern "C" cudaError_t LaunchMambaSelectiveScan(const float* d_in, float* d_out, int batch_size, int seq_len, int d_model) {
-    int total_elements = batch_size * seq_len * d_model;
-
-    // Configuración de la topología de ejecución:
-    // Ocupación estándar de hilos por bloque: 256 (Típicamente óptimo en la arquitectura SIMT)
+    int num_channels_total = batch_size * d_model;
     int threads_per_block = 256;
-    // Cálculo de la cuadrícula: redondeo siempre al alza por bloque para cubrir los sobrantes.
-    int blocks_per_grid = (total_elements + threads_per_block - 1) / threads_per_block;
+    int blocks_per_grid = (num_channels_total + threads_per_block - 1) / threads_per_block;
 
-    // Lanzamos el kernel (sintaxis triple chevron específica del compilador nvcc)
-    MambaSelectiveScanKernel<<<blocks_per_grid, threads_per_block>>>(d_in, d_out, total_elements);
+    MambaSelectiveScanKernel<<<blocks_per_grid, threads_per_block>>>(d_in, d_out, batch_size, seq_len, d_model);
 
-    // Captura estricta de errores (Opción Robusta)
-    // 1. Chequear errores inmediatos en el lanzamiento del kernel (ej. dimensiones inválidas)
+    // Contención estricta diagnóstica
     CUDA_CHECK(cudaGetLastError());
-    
-    // 2. Forzar sincronización Host <-> Device
-    // Bloquea temporalmente el flujo host para esperar a que los hilos VRAM acaben.
-    // Garantiza emitir un error ahora y no corromper estados en Python.
     CUDA_CHECK(cudaDeviceSynchronize());
 
     return cudaSuccess;
