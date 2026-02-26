@@ -32,15 +32,15 @@ execute_process(
 # Añadir directorio de inclusión de headers de Tensorflow
 include_directories(${TF_INC})
 
-# Crear la biblioteca compartida .so a partir del código C++
-add_library(zero_out SHARED zero_out.cc)
+# Crear la biblioteca compartida .so a partir del código C++ de Mamba
+add_library(mamba_kernel SHARED mamba_ssm_op.cc)
 
-# Evitar el prefijo "lib" convencional en Linux y el .so
-set_target_properties(zero_out PROPERTIES PREFIX "" SUFFIX ".so")
+# Nota: Omitimos set_target_properties(PREFIX "") para que CMake 
+# empaquete naturalmente como "libmamba_kernel.so" en Linux.
 
 # === FIX DEFINITIVO DE ABI + RTTI ===
 # Desactivamos el "RTTI" (-fno-rtti) del compilador de Colab, porque los paquetes de TensorFlow alojados en la nube están compilados ciegos y ocultan la TypeInformation virtual.
-target_compile_options(zero_out PRIVATE -fno-rtti -fno-exceptions -fPIC -O2)
+target_compile_options(mamba_kernel PRIVATE -fno-rtti -fno-exceptions -fPIC -O2)
 
 # Colab's tf.sysconfig devuelve por defecto -D_GLIBCXX_USE_CXX11_ABI=1, lo cual es incompatible
 # con el binario pre-compilado de pip que requiere 0. 
@@ -51,5 +51,5 @@ string(REGEX REPLACE "-D_GLIBCXX_USE_CXX11_ABI=[0-9]" "" TF_COMPILE_FLAGS_STR_CL
 set(TF_COMPILE_FLAGS_FINAL "${TF_COMPILE_FLAGS_STR_CLEAN} -D_GLIBCXX_USE_CXX11_ABI=0")
 
 # Añadimos limpiamente todos los flags al target
-set_target_properties(zero_out PROPERTIES COMPILE_FLAGS "${TF_COMPILE_FLAGS_FINAL}")
-set_target_properties(zero_out PROPERTIES LINK_FLAGS "${TF_LINK_FLAGS_STR}")
+set_target_properties(mamba_kernel PROPERTIES COMPILE_FLAGS "${TF_COMPILE_FLAGS_FINAL}")
+set_target_properties(mamba_kernel PROPERTIES LINK_FLAGS "${TF_LINK_FLAGS_STR}")
