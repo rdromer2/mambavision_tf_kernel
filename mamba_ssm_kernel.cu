@@ -17,14 +17,42 @@
 // 1. El Kernel de CUDA (Se ejecuta en la VRAM de la gráfica)
 // El cualificador __global__ indica que la función corre en GPU y es invocable desde CPU.
 __global__ void MambaSelectiveScanKernel(const float* u_in, float* out, int total_elements) {
-    // Calculamos el índice global lineal del hilo actual a través de la topología CUDA.
+    // Calculamos el índice global lineal (astronómico) y el índice local del hilo dentro del bloque
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int tid = threadIdx.x; // Índice de 0 a 255
     
-    // Verificamos no salirnos de los límites del arreglo (crítico en memoria de GPU).
+    // --- FASE 3.5: RESERVA ESTÁTICA EN MEMORIA COMPARTIDA (SRAM L1) ---
+    // ¿Por qué tamaño fijo 256? Al lanzarlo desde C++ fijamos `threads_per_block = 256`.
+    // La memoria __shared__ la ven en comunión exclusivamente los 256 hilos de este bloque físico.
+    __shared__ float s_u[256];
+    __shared__ float s_h[256];
+
+    // --- CARGA COOPERATIVA DE VRAM A SRAM ---
+    // Si el hilo global está dentro de un dato válido, carga el dato físico de VRAM
     if (idx < total_elements) {
-        // En esta Fase 3, usamos una operación dummy de prueba para verificar
-        // el enlazado completo (TensorFlow -> C++ -> GPU) antes de inyectar las ecuaciones reales.
-        out[idx] = u_in[idx] * 2.0f;
+        s_u[tid] = u_in[idx];
+        s_h[tid] = 0.0f; // Inicialización temporal del Hidden State de Mamba
+    } else {
+        // Purgado de las posiciones de caché muertas en los bordes para el bloque final (Padding)
+        s_u[tid] = 0.0f;
+        s_h[tid] = 0.0f;
+    }
+
+    // --- BARRERA FÍSICA INQUEBRANTABLE ---
+    // ¿Por qué está aquí suelto y fuera del IF? 
+    // Un __syncthreads() "if statement" divergente provoca un DEADLOCK, porque los hilos
+    // que entran al if esperan infinitamente a los que se fueron por el else.
+    // Aquí bloqueamos el reloj del SM hasta certificar que s_u[] de [0 a 255] se ha rellenado al completo.
+    __syncthreads();
+
+    // <--- MARCADOR FUTURO: MATEMÁTICAS SELECTIVE SCAN RECURRENTES AQUÍ --->
+    
+    // --- ESCRITURA VRAM DESCENDENTE TEMPORAL ---
+    // Ya seguros de que SRAM está nutrida y sincronizada matemáticamente, 
+    // volcamos los resultados estancados de nuevo a la memoria visible por el sistema host
+    if (idx < total_elements) {
+        // En Fase 3 lo leíamos de `u_in`. Ahora es `s_u` (que multiplicaremos de paso para test visual)
+        out[idx] = s_u[tid] * 2.0f;
     }
 }
 
