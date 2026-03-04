@@ -24,25 +24,25 @@ extern "C" int LaunchMambaSelectiveScanBwd(
 // NOTA: Usar nombres descriptivos en minúsculas para evitar el conflicto con
 // las variables de tipo reservadas de TF (A, B, C, T).
 REGISTER_OP("MambaSelectiveScanGrad")
-    .Input("dy: float")         // [batch, seq_len, d_model]  - Gradiente de la pérdida
     .Input("u: float")          // [batch, seq_len, d_model]  - Entrada original
     .Input("delta: float")      // [batch, seq_len, d_model]  - Step size original
     .Input("a_param: float")    // [d_model]                  - Matriz de estado original
     .Input("b_param: float")    // [batch, seq_len, d_model]  - Matriz entrada original
     .Input("c_param: float")    // [batch, seq_len, d_model]  - Matriz salida original
+    .Input("dy: float")         // [batch, seq_len, d_model]  - Gradiente de la pérdida
     .Output("du: float")        // [batch, seq_len, d_model]
     .Output("d_delta: float")   // [batch, seq_len, d_model]
     .Output("d_a: float")       // [d_model]
     .Output("d_b: float")       // [batch, seq_len, d_model]
     .Output("d_c: float")       // [batch, seq_len, d_model]
     .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
-        // du, d_delta, d_b, d_c tienen la misma shape que u (input 1)
-        c->set_output(0, c->input(1));  // du     = shape(u)
-        c->set_output(1, c->input(1));  // d_delta = shape(u)
-        c->set_output(3, c->input(1));  // d_b    = shape(u)
-        c->set_output(4, c->input(1));  // d_c    = shape(u)
-        // d_a tiene la misma shape que a_param (input 3)
-        c->set_output(2, c->input(3));  // d_a    = shape(A)
+        // du, d_delta, d_b, d_c tienen la misma shape que u (input 0)
+        c->set_output(0, c->input(0));  // du     = shape(u)
+        c->set_output(1, c->input(0));  // d_delta = shape(u)
+        c->set_output(3, c->input(0));  // d_b    = shape(u)
+        c->set_output(4, c->input(0));  // d_c    = shape(u)
+        // d_a tiene la misma shape que a_param (input 2)
+        c->set_output(2, c->input(2));  // d_a    = shape(A)
         return absl::OkStatus();
     });
 
@@ -57,12 +57,12 @@ public:
         // ====================================================================
         // CAPTURA DE LOS 6 TENSORES DE ENTRADA
         // ====================================================================
-        const Tensor& dy_tensor    = context->input(0);  // dy:    [batch, seq_len, d_model]
-        const Tensor& u_tensor     = context->input(1);  // u:     [batch, seq_len, d_model]
-        const Tensor& delta_tensor = context->input(2);  // delta: [batch, seq_len, d_model]
-        const Tensor& A_tensor     = context->input(3);  // A:     [d_model]
-        const Tensor& B_tensor     = context->input(4);  // B:     [batch, seq_len, d_model]
-        const Tensor& C_tensor     = context->input(5);  // C:     [batch, seq_len, d_model]
+        const Tensor& u_tensor     = context->input(0);  // u:     [batch, seq_len, d_model]
+        const Tensor& delta_tensor = context->input(1);  // delta: [batch, seq_len, d_model]
+        const Tensor& A_tensor     = context->input(2);  // A:     [d_model]
+        const Tensor& B_tensor     = context->input(3);  // B:     [batch, seq_len, d_model]
+        const Tensor& C_tensor     = context->input(4);  // C:     [batch, seq_len, d_model]
+        const Tensor& dy_tensor    = context->input(5);  // dy:    [batch, seq_len, d_model]
 
         // ====================================================================
         // VALIDACIÓN ESTRICTA DIMENSIONAL
