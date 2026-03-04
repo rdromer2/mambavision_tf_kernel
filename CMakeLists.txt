@@ -34,32 +34,18 @@ execute_process(
 # Añadir directorio de inclusión de headers de Tensorflow
 include_directories(${TF_INC})
 
-# Crear la biblioteca compartida empaquetando el controlador en C++ y el Kernel en .cu.
-# CMake delegará inteligentemente cada archivo `.cu` a *nvcc* y cada `.cc` a *g++*,
-# y luego linkeará sus resultados en un objeto dinámico (.so) unificado.
+# ==============================================================================
+# LIBRERÍA 1: FORWARD PASS
+# ==============================================================================
 add_library(mamba_kernel SHARED mamba_ssm_op.cc mamba_ssm_kernel.cu)
 
-# Opción Robusta - Metadatos y Optimización por Lenguaje (Generator Expressions):
-# 1. -O3: Máxima agresividad matemática en Kernel.
-# 2. -lineinfo: Exponemos información de debug a los profilers "ncu"/"nsys" sin costo real.
-# 3. Forzamos código dependiente de posición independizado (-fPIC) para la capa del Host.
 target_compile_options(mamba_kernel PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:-O3 -lineinfo>
     $<$<COMPILE_LANGUAGE:CXX>:-fPIC -O2>
 )
 
-# Opción Robusta - Ensamblado de Arquitectura Gráfica Nivel Hardware
-# 75 = Turing (Tesla T4 en Colab gratuito)
-# 80 = Ampere (A100 en Colab Pro)
-# ¿Por qué? Prevenimos que el nvcc genere un código intermedio universal PTX (PseudoEnsamblador) y obligamos  
-# a que en su lugar inyecte código en Ensamblador SASS nativo. Esto extirpa las severas sobrecargas por JIT compilation
-# en tiempo de ejecución para cada inferencia primeriza (TensorFlow Warmup Stalls).
 set_target_properties(mamba_kernel PROPERTIES CUDA_ARCHITECTURES "75;80")
 
-# Inyectamos los flags nativos de TF usando la API moderna de CMake.
-# separate_arguments() convierte el string a lista CMake; COMPILE_LANGUAGE:CXX
-# asegura que los flags de ABI de TF (-D_GLIBCXX_USE_CXX11_ABI=0) se apliquen
-# exclusivamente al compilador C++ Host (g++) y no contaminen nvcc.
 separate_arguments(TF_COMPILE_FLAGS_LIST NATIVE_COMMAND "${TF_COMPILE_FLAGS_STR}")
 separate_arguments(TF_LINK_FLAGS_LIST NATIVE_COMMAND "${TF_LINK_FLAGS_STR}")
 
@@ -67,3 +53,24 @@ target_compile_options(mamba_kernel PRIVATE
     $<$<COMPILE_LANGUAGE:CXX>:${TF_COMPILE_FLAGS_LIST}>
 )
 target_link_options(mamba_kernel PRIVATE ${TF_LINK_FLAGS_LIST})
+
+# ==============================================================================
+# LIBRERÍA 2: BACKWARD PASS (FASE 4)
+# ==============================================================================
+# Empaquetamos el nuevo wrapper y kernel en una librería dinámica independiente
+# para no alterar el binario original del forward pass ya verificado.
+add_library(mamba_bwd_kernel SHARED mamba_ssm_bwd_op.cc mamba_ssm_bwd_kernel.cu)
+
+target_compile_options(mamba_bwd_kernel PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:-O3 -lineinfo>
+    $<$<COMPILE_LANGUAGE:CXX>:-fPIC -O2>
+)
+
+# Misma arquitectura de hardware que el forward pass (T4 y A100)
+set_target_properties(mamba_bwd_kernel PROPERTIES CUDA_ARCHITECTURES "75;80")
+
+# Inyectamos los mismos flags nativos de TF
+target_compile_options(mamba_bwd_kernel PRIVATE
+    $<$<COMPILE_LANGUAGE:CXX>:${TF_COMPILE_FLAGS_LIST}>
+)
+target_link_options(mamba_bwd_kernel PRIVATE ${TF_LINK_FLAGS_LIST})

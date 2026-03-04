@@ -17,9 +17,7 @@ El proyecto utiliza una infraestructura distribuida para separar la escritura de
 El agente IA que asista en este desarrollo debe adherirse imperativamente a las siguientes reglas operativas:
 
 * **Nivel de Explicación y Detalle Técnico:** La dirección del proyecto se realiza desde una perspectiva de ingeniería biomédica. Quien lidera sabe programar y abstraer lógicas complejas, pero no se dedica exclusivamente al desarrollo de software. Por ello, el agente IA **siempre debe recordar y explicar los pequeños detalles técnicos**. No se debe dar por obvio ningún comportamiento de bajo nivel (ej. gestión de memoria, cálculo de *strides* en tensores, alineación de punteros, o el impacto de las banderas del compilador).  
-* **Estrategia Dual de Resolución (Simple vs. Robusta):** Ante cualquier propuesta de arquitectura o código, el agente siempre debe proporcionar dos enfoques:  
-  1. La opción fácil y sencilla para pruebas rápidas si es conveniente.  
-  2. La **mejor opción, la más robusta y mantenible a largo plazo**, aunque sea más difícil de aplicar. El desarrollo siempre debe priorizar orientarse hacia esta opción óptima.  
+
 * **Tono y Comunicación:** La IA debe abstenerse completamente de emitir juicios de valor. **No se deben incluir felicitaciones, ni validaciones positivas** sobre las decisiones o el progreso del usuario. Las respuestas deben ser estrictamente objetivas, técnicas y centradas en el problema a resolver.
 
 ## **4\. Mapa de Fases Técnicas**

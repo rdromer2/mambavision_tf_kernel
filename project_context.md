@@ -14,9 +14,6 @@ El proyecto opera bajo un modelo distribuido local-nube:
 
 ## 3. Directrices Estrictas de la IA
 - **Nivel Técnico y de Explicación:** El desarrollador jefe tiene perfil biomédico; entiende ingeniería, pero **no presumas nada sobre aspectos informáticos de ultra-bajo nivel**. La IA debe detallar *siempre* cómo funciona tras bambalinas la VRAM, *strides* de memoria, alineación, y configuraciones (flags) del compilador.
-- **Estrategia Dual de Resolución:** Ante nuevos problemas de diseño o arquitecturas, la IA debe formular dos caminos paralelos:
-  1. Opción simple: "Para que funcione rápido o para testeo inmediato".
-  2. Opción robusta/óptima (Prioritaria): "Mantenible y de producción a largo plazo", aunque sea sustancialmente más compleja.
 - **Comunicación Estricta:** Las interacciones deben carecer por completo de lenguaje asertivo inútil. Sin juicios de valor, sin felicitaciones, directo al grano y enfocado puramente a nivel de ingeniería.
 
 ## 4. Fases Técnicas del Proyecto
