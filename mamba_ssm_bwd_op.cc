@@ -1,4 +1,3 @@
-#include <cuda_runtime_api.h>
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/shape_inference.h"
 #include "tensorflow/core/framework/op_kernel.h"
@@ -164,13 +163,6 @@ public:
 
         // 1 puntero del Workspace (lectura/escritura interna)
         float* d_workspace_ptr = h_workspace.flat<float>().data();
-
-        // ====================================================================
-        // INICIALIZACIÓN DE dA A CERO (target de atomicAdd)
-        // ====================================================================
-        // Antes de que el kernel haga atomicAdd sobre dA, el tensor debe
-        // contener ceros. cudaMemset es síncrono respecto al stream default.
-        cudaMemset(d_dA_ptr, 0, d_model * sizeof(float));
 
         // ====================================================================
         // INVOCACIÓN AL DOMINIO NVIDIA/CUDA

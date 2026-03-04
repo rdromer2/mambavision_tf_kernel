@@ -200,6 +200,10 @@ extern "C" cudaError_t LaunchMambaSelectiveScanBwd(
     float* h_workspace,
     int batch_size, int seq_len, int d_model) {
 
+    // Inicialización pre-kernel de dA_out (escala: [d_model])
+    // Necesario porque atomicAdd en el kernel acumulará desde cero.
+    cudaMemset(dA_out, 0, d_model * sizeof(float));
+
     int num_channels_total = batch_size * d_model;
     int threads_per_block = 256;
     int blocks_per_grid = (num_channels_total + threads_per_block - 1) / threads_per_block;
