@@ -41,7 +41,7 @@ def load_pytorch_checkpoint(pth_path):
         dict[str, np.ndarray]: state_dict con valores numpy.
     """
     import torch
-    checkpoint = torch.load(pth_path, map_location='cpu', weights_only=True)
+    checkpoint = torch.load(pth_path, map_location='cpu', weights_only=False)
 
     # Algunos checkpoints envuelven el state_dict bajo llave 'state_dict'
     # o 'model'. Detectamos automáticamente.
