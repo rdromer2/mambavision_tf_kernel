@@ -55,7 +55,9 @@ class MambaVisionMixerBlock(tf.keras.layers.Layer):
         - norm:      γ, β de LayerNorm
         - in_proj:   W (d_model → 2·d_inner)
         - conv1d:    Kernel depthwise (k, 1, d_inner)
-        - x_proj:    W (d_inner → dt_rank + 2·d_state)
+        - x_proj:    W (d_inner → dt_rank)
+        - B_gen:     W (d_inner → d_state) — sin equivalente PyTorch
+        - C_gen:     W (d_inner → d_state) — sin equivalente PyTorch
         - dt_proj:   W (dt_rank → d_inner) + bias
         - B_proj:    W (d_state → d_inner)
         - C_proj:    W (d_state → d_inner)
@@ -101,12 +103,20 @@ class MambaVisionMixerBlock(tf.keras.layers.Layer):
             groups=d,
             name='conv1d_x')
 
-        # --- Proyección unificada para parámetros SSM ---
-        # Genera [dt_raw, B_raw, C_raw] en una sola operación.
+        # --- Proyección de delta (dt) ---
+        # Genera solo dt_raw. B_raw y C_raw se generan independientemente.
         self.x_proj = tf.keras.layers.Dense(
-            self.dt_rank + self.d_state * 2,
+            self.dt_rank,
             use_bias=False,
             name='x_proj')
+
+        # --- Generadores independientes de B y C ---
+        # Generan B_raw y C_raw directamente desde x_act.
+        # Sin equivalente en PyTorch; mantienen inicialización local.
+        self.B_gen = tf.keras.layers.Dense(
+            self.d_state, use_bias=False, name='B_gen')
+        self.C_gen = tf.keras.layers.Dense(
+            self.d_state, use_bias=False, name='C_gen')
 
         # --- Expansión de delta ---
         # dt_rank → d_inner, con bias (el bias codifica la escala base de Δ).
@@ -175,11 +185,9 @@ class MambaVisionMixerBlock(tf.keras.layers.Layer):
             self.conv1d(x_branch))                     # (B, L, d_inner)
 
         # 5. Generación dinámica de parámetros SSM
-        x_dbl = self.x_proj(x_act)                    # (B, L, dt_rank + 2·d_state)
-        dt_raw, B_raw, C_raw = tf.split(
-            x_dbl,
-            [self.dt_rank, self.d_state, self.d_state],
-            axis=-1)
+        dt_raw = self.x_proj(x_act)                    # (B, L, dt_rank)
+        B_raw  = self.B_gen(x_act)                     # (B, L, d_state)
+        C_raw  = self.C_gen(x_act)                     # (B, L, d_state)
 
         # 6. Expansión de delta + Softplus (estrictamente positivo)
         delta = tf.nn.softplus(self.dt_proj(dt_raw))   # (B, L, d_inner)
